@@ -17,12 +17,16 @@ import numpy as np
 
 
 class Wiring:
-    def __init__(self, units):
+    def __init__(self, units,
+                 adjacency_matrix=None, sensory_adjacency_matrix=None,
+                 input_dim=None, output_dim=None):
         self.units = units
-        self.adjacency_matrix = np.zeros([units, units], dtype=np.int32)
-        self.sensory_adjacency_matrix = None
-        self.input_dim = None
-        self.output_dim = None
+        self.adjacency_matrix = \
+            np.zeros([units, units], dtype=np.int32) if adjacency_matrix is None \
+            else adjacency_matrix
+        self.sensory_adjacency_matrix = sensory_adjacency_matrix
+        self.input_dim = input_dim
+        self.output_dim = output_dim
 
     @property
     def num_layers(self):
@@ -35,19 +39,19 @@ class Wiring:
         return self.input_dim is not None
 
     def build(self, input_dim):
-        if not self.input_dim is None and self.input_dim != input_dim:
+        if self.input_dim is not None and self.input_dim != input_dim:
             raise ValueError(
-                "Conflicting input dimensions provided. set_input_dim() was called with {} but actual input has dimension {}".format(
-                    self.input_dim, input_dim
-                )
+                f"Conflicting input dimensions provided. "
+                f"set_input_dim() was called with {self.input_dim} "
+                f"but actual input has dimension {input_dim}"
             )
         if self.input_dim is None:
             self.set_input_dim(input_dim)
 
-    def erev_initializer(self, shape=None, dtype=None):
+    def erev_initializer(self):
         return np.copy(self.adjacency_matrix)
 
-    def sensory_erev_initializer(self, shape=None, dtype=None):
+    def sensory_erev_initializer(self):
         return np.copy(self.sensory_adjacency_matrix)
 
     def set_input_dim(self, input_dim):
@@ -61,26 +65,23 @@ class Wiring:
 
     # May be overwritten by child class
     def get_type_of_neuron(self, neuron_id):
-        return "motor" if neuron_id < self.output_dim else "inter"
+        return "out" if neuron_id < self.output_dim else "inter"
 
     def add_synapse(self, src, dest, polarity):
         if src < 0 or src >= self.units:
             raise ValueError(
-                "Cannot add synapse originating in {} if cell has only {} units".format(
-                    src, self.units
-                )
+                f"Cannot add synapse originating in {src} "
+                f"if cell has only {self.units} units"
             )
         if dest < 0 or dest >= self.units:
             raise ValueError(
-                "Cannot add synapse feeding into {} if cell has only {} units".format(
-                    dest, self.units
-                )
+                f"Cannot add synapse feeding into {dest} "
+                f"if cell has only {self.units} units"
             )
-        if not polarity in [-1, 1]:
+        if polarity not in [-1, 1]:
             raise ValueError(
-                "Cannot add synapse with polarity {} (expected -1 or +1)".format(
-                    polarity
-                )
+                f"Cannot add synapse with polarity {polarity} "
+                "(expected -1 or +1)"
             )
         self.adjacency_matrix[src, dest] = polarity
 
@@ -91,21 +92,18 @@ class Wiring:
             )
         if src < 0 or src >= self.input_dim:
             raise ValueError(
-                "Cannot add sensory synapse originating in {} if input has only {} features".format(
-                    src, self.input_dim
-                )
+                f"Cannot add sensory synapse originating in {src} "
+                f"if input has only {self.input_dim} features"
             )
         if dest < 0 or dest >= self.units:
             raise ValueError(
-                "Cannot add synapse feeding into {} if cell has only {} units".format(
-                    dest, self.units
-                )
+                f"Cannot add synapse feeding into {dest} "
+                f"if cell has only {self.units} units"
             )
-        if not polarity in [-1, 1]:
+        if polarity not in [-1, 1]:
             raise ValueError(
-                "Cannot add synapse with polarity {} (expected -1 or +1)".format(
-                    polarity
-                )
+                f"Cannot add synapse with polarity {polarity} "
+                "(expected -1 or +1)"
             )
         self.sensory_adjacency_matrix[src, dest] = polarity
 
@@ -120,13 +118,11 @@ class Wiring:
 
     @classmethod
     def from_config(cls, config):
-        # There might be a cleaner solution but it will work
-        wiring = Wiring(config["units"])
-        wiring.adjacency_matrix = config["adjacency_matrix"]
-        wiring.sensory_adjacency_matrix = config["sensory_adjacency_matrix"]
-        wiring.input_dim = config["input_dim"]
-        wiring.output_dim = config["output_dim"]
-
+        wiring = Wiring(config["units"],
+                        adjacency_matrix=config["adjacency_matrix"],
+                        sensory_adjacency_matrix=config["sensory_adjacency_matrix"],
+                        input_dim=config["input_dim"],
+                        output_dim=config["output_dim"])
         return wiring
 
     def get_graph(self, include_sensory_neurons=True):
@@ -146,32 +142,33 @@ class Wiring:
         DG = nx.DiGraph()
         for i in range(self.units):
             neuron_type = self.get_type_of_neuron(i)
-            DG.add_node("neuron_{:d}".format(i), neuron_type=neuron_type)
-        for i in range(self.input_dim):
-            DG.add_node("sensory_{:d}".format(i), neuron_type="sensory")
+            DG.add_node(f"neuron_{i:d}", neuron_type=neuron_type)
+
+        if include_sensory_neurons:
+            for i in range(self.input_dim):
+                DG.add_node(f"sensory_{i:d}", neuron_type="sensory")
+
+            sensory_erev = self.sensory_adjacency_matrix
+            for src in range(self.input_dim):
+                for dest in range(self.units):
+                    if self.sensory_adjacency_matrix[src, dest] != 0:
+                        polarity = (
+                            "excitatory" if sensory_erev[src, dest] >= 0.0 else "inhibitory"
+                        )
+                        DG.add_edge(
+                            f"sensory_{src:d}",
+                            f"neuron_{dest:d}",
+                            polarity=polarity,
+                        )
 
         erev = self.adjacency_matrix
-        sensory_erev = self.sensory_adjacency_matrix
-
-        for src in range(self.input_dim):
-            for dest in range(self.units):
-                if self.sensory_adjacency_matrix[src, dest] != 0:
-                    polarity = (
-                        "excitatory" if sensory_erev[src, dest] >= 0.0 else "inhibitory"
-                    )
-                    DG.add_edge(
-                        "sensory_{:d}".format(src),
-                        "neuron_{:d}".format(dest),
-                        polarity=polarity,
-                    )
-
         for src in range(self.units):
             for dest in range(self.units):
                 if self.adjacency_matrix[src, dest] != 0:
                     polarity = "excitatory" if erev[src, dest] >= 0.0 else "inhibitory"
                     DG.add_edge(
-                        "neuron_{:d}".format(src),
-                        "neuron_{:d}".format(dest),
+                        f"neuron_{src:d}",
+                        f"neuron_{dest:d}",
                         polarity=polarity,
                     )
         return DG
@@ -226,19 +223,19 @@ class Wiring:
 
         default_colors = {
             "inter": "tab:blue",
-            "motor": "tab:orange",
+            "out": "tab:orange",
             "sensory": "tab:olive",
         }
         if neuron_colors is None:
             neuron_colors = {}
         # Merge default with user provided color dict
         for k, v in default_colors.items():
-            if not k in neuron_colors.keys():
+            if k not in neuron_colors.keys():
                 neuron_colors[k] = v
 
         legend_patches = []
         for k, v in neuron_colors.items():
-            label = "{}{} neurons".format(k[0].upper(), k[1:])
+            label = f"{k[0].upper()}{k[1:]} neurons"
             color = v
             legend_patches.append(mpatches.Patch(color=color, label=label))
 
@@ -252,11 +249,9 @@ class Wiring:
             "spectral": nx.spectral_layout,
             "spiral": nx.spiral_layout,
         }
-        if not layout in layouts.keys():
+        if layout not in layouts.keys():
             raise ValueError(
-                "Unknown layer '{}', use one of '{}'".format(
-                    layout, str(layouts.keys())
-                )
+                f"Unknown layer '{layout}', use one of '{str(layouts.keys())}'"
             )
         pos = layouts[layout](G)
 
@@ -292,18 +287,19 @@ class Wiring:
 
 class FullyConnected(Wiring):
     def __init__(
-            self, units, output_dim=None, erev_init_seed=1111, self_connections=True
+            self, units, output_dim=None, random_seed=420, self_connections=True
     ):
         super(FullyConnected, self).__init__(units)
         if output_dim is None:
             output_dim = units
         self.self_connections = self_connections
         self.set_output_dim(output_dim)
-        self._rng = np.random.default_rng(erev_init_seed)
+        self._rng = np.random.default_rng(random_seed)
         for src in range(self.units):
             for dest in range(self.units):
                 if src == dest and not self_connections:
                     continue
+                # TODO: why is this not -1, 1 or just 1?
                 polarity = self._rng.choice([-1, 1, 1])
                 self.add_synapse(src, dest, polarity)
 
@@ -316,7 +312,7 @@ class FullyConnected(Wiring):
 
 
 class Random(Wiring):
-    def __init__(self, units, output_dim=None, sparsity_level=0.0, random_seed=1111):
+    def __init__(self, units, output_dim=None, sparsity_level=0.0, random_seed=420):
         super(Random, self).__init__(units)
         if output_dim is None:
             output_dim = units
@@ -325,9 +321,8 @@ class Random(Wiring):
 
         if sparsity_level < 0.0 or sparsity_level >= 1.0:
             raise ValueError(
-                "Invalid sparsity level '{}', expected value in range [0,1)".format(
-                    sparsity_level
-                )
+                "Invalid sparsity level '{sparsity_level}', "
+                "expected value in range [0,1)"
             )
         self._rng = np.random.default_rng(random_seed)
 
@@ -374,7 +369,7 @@ class NCP(Wiring):
             inter_fanout,
             recurrent_command_synapses,
             motor_fanin,
-            seed=22222,
+            seed=420,
     ):
         """
         Creates a Neural Circuit Policies wiring.
@@ -392,6 +387,8 @@ class NCP(Wiring):
         """
 
         super(NCP, self).__init__(inter_neurons + command_neurons + motor_neurons)
+        self._sensory_neurons = None
+        self._num_sensory_neurons = None
         self.set_output_dim(motor_neurons)
         self._rng = np.random.RandomState(seed)
         self._num_inter_neurons = inter_neurons
@@ -408,7 +405,7 @@ class NCP(Wiring):
             range(
                 self._num_motor_neurons,
                 self._num_motor_neurons + self._num_command_neurons,
-                )
+            )
         )
         self._inter_neurons = list(
             range(
@@ -416,26 +413,23 @@ class NCP(Wiring):
                 self._num_motor_neurons
                 + self._num_command_neurons
                 + self._num_inter_neurons,
-                )
+            )
         )
 
         if self._motor_fanin > self._num_command_neurons:
             raise ValueError(
-                "Error: Motor fanin parameter is {} but there are only {} command neurons".format(
-                    self._motor_fanin, self._num_command_neurons
-                )
+                f"Error: Motor fanin parameter is {self._motor_fanin} "
+                f"but there are only {self._num_command_neurons} command neurons"
             )
         if self._sensory_fanout > self._num_inter_neurons:
             raise ValueError(
-                "Error: Sensory fanout parameter is {} but there are only {} inter neurons".format(
-                    self._sensory_fanout, self._num_inter_neurons
-                )
+                f"Error: Sensory fanout parameter is {self._sensory_fanout} "
+                f"but there are only {self._num_inter_neurons} inter neurons"
             )
         if self._inter_fanout > self._num_command_neurons:
             raise ValueError(
-                "Error:: Inter fanout parameter is {} but there are only {} command neurons".format(
-                    self._inter_fanout, self._num_command_neurons
-                )
+                f"Error: Inter fanout parameter is {self._inter_fanout} "
+                f"but there are only {self._num_command_neurons} command neurons"
             )
 
     @property
@@ -449,7 +443,7 @@ class NCP(Wiring):
             return self._command_neurons
         elif layer_id == 2:
             return self._motor_neurons
-        raise ValueError("Unknown layer {}".format(layer_id))
+        raise ValueError(f"Unknown layer {layer_id}")
 
     def get_type_of_neuron(self, neuron_id):
         if neuron_id < self._num_motor_neurons:
@@ -520,7 +514,7 @@ class NCP(Wiring):
             polarity = self._rng.choice([-1, 1])
             self.add_synapse(src, dest, polarity)
 
-    def _build_command__to_motor_layer(self):
+    def _build_command_to_motor_layer(self):
         # Randomly connect command neurons to motor neurons
         unreachable_command_neurons = [l for l in self._command_neurons]
         for dest in self._motor_neurons:
@@ -553,7 +547,7 @@ class NCP(Wiring):
         self._build_sensory_to_inter_layer()
         self._build_inter_to_command_layer()
         self._build_recurrent_command_layer()
-        self._build_command__to_motor_layer()
+        self._build_command_to_motor_layer()
 
 
 class AutoNCP(NCP):
@@ -562,7 +556,7 @@ class AutoNCP(NCP):
             units,
             output_size,
             sparsity_level=0.5,
-            seed=22222,
+            seed=420,
     ):
         """Instantiate an NCP wiring with only needing to specify the number of units and the number of outputs
 
@@ -573,11 +567,13 @@ class AutoNCP(NCP):
         """
         if output_size >= units - 2:
             raise ValueError(
-                f"Output size must be less than the number of units-2 (given {units} units, {output_size} output size)"
+                f"Output size must be less than the number of units-2 "
+                f"(given {units} units, {output_size} output size)"
             )
         if sparsity_level < 0.1 or sparsity_level > 1.0:
             raise ValueError(
-                f"Sparsity level must be between 0.0 and 0.9 (given {sparsity_level})"
+                f"Sparsity level must be between 0.0 and 0.9 "
+                f"(given {sparsity_level})"
             )
         density_level = 1.0 - sparsity_level
         inter_and_command_neurons = units - output_size
@@ -598,3 +594,17 @@ class AutoNCP(NCP):
             motor_fanin,
             seed=seed,
         )
+
+
+class FlowWiring(Wiring):
+    def __init__(self, units, n_layers, hidden_dims, time_hidden_dim):
+        super(FlowWiring, self).__init__(units)
+        self.set_output_dim(units)
+        self.sparsity_level = 0.0
+
+        self.n_layers = n_layers
+        self.hidden_dims = hidden_dims
+        self.time_hidden_dim = time_hidden_dim
+
+    def build(self, input_shape):
+        super().build(input_shape)

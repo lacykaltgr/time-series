@@ -74,6 +74,45 @@ class ODELSTM(tf.keras.layers.Layer):
 
 
 
+    class ODELSTM(BaseContinuousLSTM):
+        """
+        ODE-LSTM model
+
+        Args:
+            dim: Data dimension
+            hidden_dim: LSTM hidden dimension
+            activation: Name of the activation function from `torch.nn`
+            final_activation: Name of the activation function from `torch.nn`
+            solver: Which numerical solver to use (e.g. `dopri5`, `euler`, `rk4`)
+            solver_step: How many solvers steps to take, only applicable for fixed step solvers
+        """
+    def __init__(
+            self,
+            dim: int,
+            hidden_dim: int,
+            activation: str,
+            final_activation: str,
+            solver: str,
+            solver_step: int,
+            **kwargs
+    ):
+        super().__init__(
+            dim,
+            hidden_dim,
+            ODEModel(
+                dim=hidden_dim,
+                net='concat',
+                hidden_dims=[hidden_dim],
+                activation=activation,
+                final_activation=final_activation,
+                solver=solver,
+                solver_step=solver_step,
+            )
+        )
+
+
+
+
 
 
 

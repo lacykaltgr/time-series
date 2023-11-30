@@ -56,3 +56,36 @@ class GRUODE(tf.keras.layers.Layer):
         return hidden_state, [hidden_state]
 
         return ht, [ht]
+
+
+
+class GRUODENet(Module):
+    """
+    GRU-ODE drift function
+
+    Args:
+        hidden_dim: Size of the GRU hidden state
+    """
+    def __init__(self, hidden_dim: int):
+        super().__init__()
+        self.lin_hh = nn.Linear(hidden_dim, hidden_dim)
+        self.lin_hz = nn.Linear(hidden_dim, hidden_dim)
+        self.lin_hr = nn.Linear(hidden_dim, hidden_dim)
+
+    def forward(
+            self,
+            t: Tensor,
+            inp: Tuple[Tensor, Tensor]
+    ) -> Tuple[Tensor, Tensor]:
+
+        h, diff = inp[0], inp[1]
+
+        # Continuous gate functions
+        r = torch.sigmoid(self.lin_hr(h))
+        z = torch.sigmoid(self.lin_hz(h))
+        u = torch.tanh(self.lin_hh(r * h))
+
+        # Final drift
+        dh = (1 - z) * (u - h) * diff
+
+        return dh, torch.zeros_like(diff).to(dh)

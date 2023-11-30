@@ -12,17 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Union
 import numpy as np
 import torch
 from torch import nn
 from wiring import Wiring, FullyConnected
+from abc import ABC, abstractmethod
 
 
-class Recurrent(nn.Module):
+class Recurrent(nn.Module, ABC):
     def __init__(
             self,
             input_size: int,
-            units,
+            units: Union[int, Wiring],
             return_sequences: bool = True,
             batch_first: bool = True,
     ):
@@ -60,6 +62,70 @@ class Recurrent(nn.Module):
     def synapse_count(self):
         return np.sum(np.abs(self._wiring.adjacency_matrix))
 
+    @staticmethod
+    def init_weights(modules, initializer_scheme):
+        initializer_schemes = dict(
+            uniform=lambda w: torch.nn.init.uniform_(w, -0.1, 0.1),
+            xavier=lambda w: torch.nn.init.xavier_uniform_(w),
+            orthogonal=lambda w: torch.nn.init.orthogonal_(w)
+        )
+        if initializer_scheme not in initializer_schemes.keys():
+            raise ValueError(
+                f"Initializer {initializer_scheme} not available!"
+                f"Please choose one of these: {initializer_schemes.keys()}"
+            )
+
+        for module in modules:
+            for w in module.parameters():
+                if w.dim() == 1:
+                    initializer_scheme["uniform"](w)
+                else:
+                    initializer_scheme[initializer_scheme](w)
+
+    @abstractmethod
+    def update_state(self, inputs, states, ts):
+        pass
+
+    @property
+    def n_state_representations(self):
+        return 1
+
+    def init_state(self, hx, batch_size, is_batched, device):
+        if hx is None:
+            state = ()
+            for i in range(self.n_state_representations):
+                state_repr = torch.zeros((batch_size, self.state_size), device=device)
+                state = state + (state_repr, )
+
+        else:
+            if self.n_state_representations > 1 and isinstance(hx, torch.Tensor):
+                raise RuntimeError(
+                    "Initializing multiple state representations requires a tuple (h_a, h_b, ...) "
+                    "to be passed as state (got torch.Tensor instead)"
+                )
+            if len(hx) != self.n_state_representations:
+                raise RuntimeError(
+                    "Initializing multiple state representations "
+                    "requires a tuple of the same lenght as the number of state representations"
+                )
+            state = hx
+            state_repr1 = state[0]
+            if is_batched:
+                if state_repr1.dim() != 2:
+                    raise RuntimeError(
+                        "For batched 2-D input, state representations should "
+                        f"also be 2-D but got ({state_repr1.dim()}-D) tensor"
+                    )
+            else:
+                # batchless  mode
+                if state_repr1.dim() != 1:
+                    raise RuntimeError(
+                        "For unbatched 1-D input, state representations should "
+                        f"also be 1-D but got ({state_repr1.dim()}-D) tensor")
+                for i in range(len(state)):
+                    state[i] = state[i].unsqueeze(0)
+        return state
+
     def forward(self, input, hx=None, timespans=None):
         """
         :param input: Input tensor of shape
@@ -79,40 +145,9 @@ class Recurrent(nn.Module):
             input = input.unsqueeze(batch_dim)
             if timespans is not None:
                 timespans = timespans.unsqueeze(batch_dim)
-
         batch_size, seq_len = input.size(batch_dim), input.size(seq_dim)
 
-        if hx is None:
-            h_state = torch.zeros((batch_size, self.state_size), device=device)
-            c_state = (
-                torch.zeros((batch_size, self.state_size), device=device)
-                if self.use_mixed
-                else None
-            )
-        else:
-            if self.use_mixed and isinstance(hx, torch.Tensor):
-                raise RuntimeError(
-                    "Running a CfC with mixed_memory=True, requires a tuple (h0,c0) to be passed as state (got torch.Tensor instead)"
-                )
-            h_state, c_state = hx if self.use_mixed else (hx, None)
-            if is_batched:
-                if h_state.dim() != 2:
-                    msg = (
-                        "For batched 2-D input, hx and cx should "
-                        f"also be 2-D but got ({h_state.dim()}-D) tensor"
-                    )
-                    raise RuntimeError(msg)
-            else:
-                # batchless  mode
-                if h_state.dim() != 1:
-                    msg = (
-                        "For unbatched 1-D input, hx and cx should "
-                        f"also be 1-D but got ({h_state.dim()}-D) tensor"
-                    )
-                    raise RuntimeError(msg)
-                h_state = h_state.unsqueeze(0)
-                c_state = c_state.unsqueeze(0) if c_state is not None else None
-
+        state = self.init_state(hx, batch_size, is_batched, device)
         output_sequence = []
         for t in range(seq_len):
             if self.batch_first:
@@ -122,22 +157,15 @@ class Recurrent(nn.Module):
                 inputs = input[t]
                 ts = 1.0 if timespans is None else timespans[t].squeeze()
 
-            if self.use_mixed:
-                h_state, c_state = self.lstm(inputs, (h_state, c_state))
-            h_out, h_state = self.rnn_cell.forward(inputs, h_state, ts)
+            output, state = self.update_state(inputs, state, ts)
+
             if self.return_sequences:
-                output_sequence.append(h_out)
+                output_sequence.append(output)
 
         if self.return_sequences:
             stack_dim = 1 if self.batch_first else 0
             readout = torch.stack(output_sequence, dim=stack_dim)
         else:
-            readout = h_out
-        hx = (h_state, c_state) if self.use_mixed else h_state
+            readout = output
 
-        if not is_batched:
-            # batchless  mode
-            readout = readout.squeeze(batch_dim)
-            hx = (h_state[0], c_state[0]) if self.use_mixed else h_state[0]
-
-        return readout, hx
+        return readout, state
