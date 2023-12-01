@@ -169,3 +169,25 @@ class Recurrent(nn.Module, ABC):
             readout = output
 
         return readout, state
+
+
+
+
+    def _map_inputs(self, inputs):
+        if self._input_mapping in ["affine", "linear"]:
+            inputs = inputs * self._params["input_w"]
+        if self._input_mapping == "affine":
+            inputs = inputs + self._params["input_b"]
+        return inputs
+
+    def _map_outputs(self, state):
+        output = state
+        if self.motor_size < self.state_size:
+            output = output[:, 0 : self.motor_size]  # slice
+
+        if self._output_mapping in ["affine", "linear"]:
+            output = output * self._params["output_w"]
+        if self._output_mapping == "affine":
+            output = output + self._params["output_b"]
+        return output
+

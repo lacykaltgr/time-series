@@ -11,191 +11,175 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import numpy as np
+
 import torch
-from torch import nn
+import torch.nn as nn
+import numpy as np
 from typing import Optional, Union
-import ncps
-from . import CfCCell, LTCCell
-from .lstm import LSTMCell
 
 
-class LTC(nn.Module):
+class LTC():
     def __init__(
             self,
-            input_size: int,
-            units,
-            return_sequences: bool = True,
-            batch_first: bool = True,
-            mixed_memory: bool = False,
+            wiring,
+            in_features=None,
             input_mapping="affine",
             output_mapping="affine",
             ode_unfolds=6,
             epsilon=1e-8,
-            implicit_param_constraints=True,
+            implicit_param_constraints=False,
     ):
-        """Applies a `Liquid time-constant (LTC) <https://ojs.aaai.org/index.php/AAAI/article/view/16936>`_ RNN to an input sequence.
-
-        Examples::
-
-             >>> from ncps.torch import LTC
-             >>>
-             >>> rnn = LTC(20,50)
-             >>> x = torch.randn(2, 3, 20) # (batch, time, features)
-             >>> h0 = torch.zeros(2,50) # (batch, units)
-             >>> output, hn = rnn(x,h0)
+        """A `Liquid time-constant (LTC) <https://ojs.aaai.org/index.php/AAAI/article/view/16936>`_ cell.
 
         .. Note::
-            For creating a wired `Neural circuit policy (NCP) <https://publik.tuwien.ac.at/files/publik_292280.pdf>`_ you can pass a `ncps.wirings.NCP` object instead of the number of units
-
-        Examples::
-
-             >>> from ncps.torch import LTC
-             >>> from ncps.wirings import NCP
-             >>>
-             >>> wiring = NCP(10, 10, 8, 6, 6, 4, 6)
-             >>> rnn = LTC(20, wiring)
-
-             >>> x = torch.randn(2, 3, 20) # (batch, time, features)
-             >>> h0 = torch.zeros(2, 28) # (batch, units)
-             >>> output, hn = rnn(x,h0)
+            This is an RNNCell that process single time-steps. To get a full RNN that can process sequences see `ncps.torch.LTC`.
 
 
-        :param input_size: Number of input features
-        :param units: Wiring (ncps.wirings.Wiring instance) or integer representing the number of (fully-connected) hidden units
-        :param return_sequences: Whether to return the full sequence or just the last output
-        :param batch_first: Whether the batch or time dimension is the first (0-th) dimension
-        :param mixed_memory: Whether to augment the RNN by a `memory-cell <https://arxiv.org/abs/2006.04418>`_ to help learn long-term dependencies in the data
+        :param wiring:
+        :param in_features:
         :param input_mapping:
         :param output_mapping:
         :param ode_unfolds:
         :param epsilon:
         :param implicit_param_constraints:
         """
-
-        super(LTC, self).__init__()
-        self.input_size = input_size
-        self.wiring_or_units = units
-        self.batch_first = batch_first
-        self.return_sequences = return_sequences
-
-        if isinstance(units, ncps.wirings.Wiring):
-            wiring = units
-        else:
-            wiring = ncps.wirings.FullyConnected(units)
-        self.rnn_cell = LTCCell(
-            wiring=wiring,
-            in_features=input_size,
-            input_mapping=input_mapping,
-            output_mapping=output_mapping,
-            ode_unfolds=ode_unfolds,
-            epsilon=epsilon,
-            implicit_param_constraints=implicit_param_constraints,
-        )
-        self._wiring = wiring
-        self.use_mixed = mixed_memory
-        if self.use_mixed:
-            self.lstm = LSTMCell(input_size, self.state_size)
-
-    @property
-    def state_size(self):
-        return self._wiring.units
-
-    @property
-    def sensory_size(self):
-        return self._wiring.input_dim
-
-    @property
-    def motor_size(self):
-        return self._wiring.output_dim
-
-    @property
-    def output_size(self):
-        return self.motor_size
-
-    @property
-    def synapse_count(self):
-        return np.sum(np.abs(self._wiring.adjacency_matrix))
-
-    @property
-    def sensory_synapse_count(self):
-        return np.sum(np.abs(self._wiring.adjacency_matrix))
-
-    def forward(self, input, hx=None, timespans=None):
-        """
-
-        :param input: Input tensor of shape (L,C) in batchless mode, or (B,L,C) if batch_first was set to True and (L,B,C) if batch_first is False
-        :param hx: Initial hidden state of the RNN of shape (B,H) if mixed_memory is False and a tuple ((B,H),(B,H)) if mixed_memory is True. If None, the hidden states are initialized with all zeros.
-        :param timespans:
-        :return: A pair (output, hx), where output and hx the final hidden state of the RNN
-        """
-        device = input.device
-        is_batched = input.dim() == 3
-        batch_dim = 0 if self.batch_first else 1
-        seq_dim = 1 if self.batch_first else 0
-        if not is_batched:
-            input = input.unsqueeze(batch_dim)
-            if timespans is not None:
-                timespans = timespans.unsqueeze(batch_dim)
-
-        batch_size, seq_len = input.size(batch_dim), input.size(seq_dim)
-
-        if hx is None:
-            h_state = torch.zeros((batch_size, self.state_size), device=device)
-            c_state = (
-                torch.zeros((batch_size, self.state_size), device=device)
-                if self.use_mixed
-                else None
+        super(LTCCell, self).__init__()
+        if in_features is not None:
+            wiring.build(in_features)
+        if not wiring.is_built():
+            raise ValueError(
+                "Wiring error! Unknown number of input features. Please pass the parameter 'in_features' or call the 'wiring.build()'."
             )
+        self.make_positive_fn = (
+            nn.Softplus() if implicit_param_constraints else nn.Identity()
+        )
+        self._implicit_param_constraints = implicit_param_constraints
+        self._init_ranges = {
+            "gleak": (0.001, 1.0),
+            "vleak": (-0.2, 0.2),
+            "cm": (0.4, 0.6),
+            "w": (0.001, 1.0),
+            "sigma": (3, 8),
+            "mu": (0.3, 0.8),
+            "sensory_w": (0.001, 1.0),
+            "sensory_sigma": (3, 8),
+            "sensory_mu": (0.3, 0.8),
+        }
+        self._wiring = wiring
+        self._input_mapping = input_mapping
+        self._output_mapping = output_mapping
+        self._ode_unfolds = ode_unfolds
+        self._epsilon = epsilon
+        self._clip = torch.nn.ReLU()
+        self._allocate_parameters()
+
+    def _get_init_value(self, shape, param_name):
+        minval, maxval = self._init_ranges[param_name]
+        if minval == maxval:
+            return torch.ones(shape) * minval
         else:
-            if self.use_mixed and isinstance(hx, torch.Tensor):
-                raise RuntimeError(
-                    "Running a CfC with mixed_memory=True, requires a tuple (h0,c0) to be passed as state (got torch.Tensor instead)"
-                )
-            h_state, c_state = hx if self.use_mixed else (hx, None)
-            if is_batched:
-                if h_state.dim() != 2:
-                    msg = (
-                        "For batched 2-D input, hx and cx should "
-                        f"also be 2-D but got ({h_state.dim()}-D) tensor"
-                    )
-                    raise RuntimeError(msg)
-            else:
-                # batchless  mode
-                if h_state.dim() != 1:
-                    msg = (
-                        "For unbatched 1-D input, hx and cx should "
-                        f"also be 1-D but got ({h_state.dim()}-D) tensor"
-                    )
-                    raise RuntimeError(msg)
-                h_state = h_state.unsqueeze(0)
-                c_state = c_state.unsqueeze(0) if c_state is not None else None
+            return torch.rand(*shape) * (maxval - minval) + minval
 
-        output_sequence = []
-        for t in range(seq_len):
-            if self.batch_first:
-                inputs = input[:, t]
-                ts = 1.0 if timespans is None else timespans[:, t].squeeze()
-            else:
-                inputs = input[t]
-                ts = 1.0 if timespans is None else timespans[t].squeeze()
+    def _allocate_parameters(self):
+        self._params = {}
+        self._params["gleak"] = self.add_weight(
+            name="gleak", init_value=self._get_init_value((self.state_size,), "gleak")
+        )
+        self._params["vleak"] = self.add_weight(
+            name="vleak", init_value=self._get_init_value((self.state_size,), "vleak")
+        )
+        self._params["cm"] = self.add_weight(
+            name="cm", init_value=self._get_init_value((self.state_size,), "cm")
+        )
+        self._params["sigma"] = self.add_weight(
+            name="sigma",
+            init_value=self._get_init_value(
+                (self.state_size, self.state_size), "sigma"
+            ),
+        )
+        self._params["mu"] = self.add_weight(
+            name="mu",
+            init_value=self._get_init_value((self.state_size, self.state_size), "mu"),
+        )
+        self._params["w"] = self.add_weight(
+            name="w",
+            init_value=self._get_init_value((self.state_size, self.state_size), "w"),
+        )
+        self._params["erev"] = self.add_weight(
+            name="erev",
+            init_value=torch.Tensor(self._wiring.erev_initializer()),
+        )
+        self._params["sensory_sigma"] = self.add_weight(
+            name="sensory_sigma",
+            init_value=self._get_init_value(
+                (self.sensory_size, self.state_size), "sensory_sigma"
+            ),
+        )
+        self._params["sensory_mu"] = self.add_weight(
+            name="sensory_mu",
+            init_value=self._get_init_value(
+                (self.sensory_size, self.state_size), "sensory_mu"
+            ),
+        )
+        self._params["sensory_w"] = self.add_weight(
+            name="sensory_w",
+            init_value=self._get_init_value(
+                (self.sensory_size, self.state_size), "sensory_w"
+            ),
+        )
+        self._params["sensory_erev"] = self.add_weight(
+            name="sensory_erev",
+            init_value=torch.Tensor(self._wiring.sensory_erev_initializer()),
+        )
 
-            if self.use_mixed:
-                h_state, c_state = self.lstm(inputs, (h_state, c_state))
-            h_out, h_state = self.rnn_cell.forward(inputs, h_state, ts)
-            if self.return_sequences:
-                output_sequence.append(h_out)
+        self._params["sparsity_mask"] = self.add_weight(
+            "sparsity_mask",
+            torch.Tensor(np.abs(self._wiring.adjacency_matrix)),
+            requires_grad=False,
+        )
+        self._params["sensory_sparsity_mask"] = self.add_weight(
+            "sensory_sparsity_mask",
+            torch.Tensor(np.abs(self._wiring.sensory_adjacency_matrix)),
+            requires_grad=False,
+        )
 
-        if self.return_sequences:
-            stack_dim = 1 if self.batch_first else 0
-            readout = torch.stack(output_sequence, dim=stack_dim)
-        else:
-            readout = h_out
-        hx = (h_state, c_state) if self.use_mixed else h_state
+        if self._input_mapping in ["affine", "linear"]:
+            self._params["input_w"] = self.add_weight(
+                name="input_w",
+                init_value=torch.ones((self.sensory_size,)),
+            )
+        if self._input_mapping == "affine":
+            self._params["input_b"] = self.add_weight(
+                name="input_b",
+                init_value=torch.zeros((self.sensory_size,)),
+            )
 
-        if not is_batched:
-            # batchless  mode
-            readout = readout.squeeze(batch_dim)
-            hx = (h_state[0], c_state[0]) if self.use_mixed else h_state[0]
+        if self._output_mapping in ["affine", "linear"]:
+            self._params["output_w"] = self.add_weight(
+                name="output_w",
+                init_value=torch.ones((self.motor_size,)),
+            )
+        if self._output_mapping == "affine":
+            self._params["output_b"] = self.add_weight(
+                name="output_b",
+                init_value=torch.zeros((self.motor_size,)),
+            )
 
-        return readout, hx
+
+
+
+    def apply_weight_constraints(self):
+        if not self._implicit_param_constraints:
+            # In implicit mode, the parameter constraints are implemented via
+            # a softplus function at runtime
+            self._params["w"].data = self._clip(self._params["w"].data)
+            self._params["sensory_w"].data = self._clip(self._params["sensory_w"].data)
+            self._params["cm"].data = self._clip(self._params["cm"].data)
+            self._params["gleak"].data = self._clip(self._params["gleak"].data)
+
+    def update_state(self, inputs, states, elapsed_time=1.0):
+        # Regularly sampled mode (elapsed time = 1 second)
+        inputs = self._map_inputs(inputs)
+        next_state = self._ode_solver(inputs, states, elapsed_time)
+        outputs = self._map_outputs(next_state)
+        return outputs, next_state

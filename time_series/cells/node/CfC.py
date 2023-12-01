@@ -128,10 +128,6 @@ class CfCCell(nn.Module):
             self.time_b = nn.Linear(cat_shape, hidden_size)
         self.init_weights()
 
-    def init_weights(self):
-        for w in self.parameters():
-            if w.dim() == 2 and w.requires_grad:
-                torch.nn.init.xavier_uniform_(w)
 
     def forward(self, input, hx, ts):
         x = torch.cat([input, hx], 1)

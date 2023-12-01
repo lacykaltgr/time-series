@@ -4,7 +4,7 @@ import numpy as np
 import torch
 from torch import nn
 
-from .Cfc_cell import CfCCell
+from .CfC import CfCCell
 
 
 class WiredCfCCell(nn.Module):
@@ -57,9 +57,6 @@ class WiredCfCCell(nn.Module):
             self._layers.append(rnn_cell)
             in_features = len(hidden_units)
 
-    @property
-    def state_size(self):
-        return self._wiring.units
 
     @property
     def layer_sizes(self):
@@ -68,29 +65,6 @@ class WiredCfCCell(nn.Module):
             for i in range(self._wiring.num_layers)
         ]
 
-    @property
-    def num_layers(self):
-        return self._wiring.num_layers
-
-    @property
-    def sensory_size(self):
-        return self._wiring.input_dim
-
-    @property
-    def motor_size(self):
-        return self._wiring.output_dim
-
-    @property
-    def output_size(self):
-        return self.motor_size
-
-    @property
-    def synapse_count(self):
-        return np.sum(np.abs(self._wiring.adjacency_matrix))
-
-    @property
-    def sensory_synapse_count(self):
-        return np.sum(np.abs(self._wiring.adjacency_matrix))
 
     def forward(self, input, hx, timespans):
         h_state = torch.split(hx, self.layer_sizes, dim=1)

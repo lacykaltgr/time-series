@@ -22,7 +22,7 @@ class GRU(Recurrent):
             "xavier"
         )
 
-    def update_state(self, inputs, state, ts=None):
+    def update_state(self, inputs, state, ts):
         combined = torch.cat((inputs, state), dim=1)
 
         update_gate = self.sigmoid(self.update_gate(combined))
