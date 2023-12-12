@@ -1,8 +1,6 @@
-from torch import nn
-
 from time_series.recurrent import Recurrent
-from time_series.cells.discrete.LSTM import LSTM
-from time_series.cells.discrete.GRU import GRU
+from time_series.discrete_cells.LSTM import LSTM
+from time_series.discrete_cells.GRU import GRU
 
 
 class BaseLSTM(Recurrent):

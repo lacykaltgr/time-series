@@ -22,3 +22,17 @@ class CTRNN(Recurrent):
         fused_input = torch.cat([inputs, state], dim=-1)
         new_states = self.out_layer(self.layer(fused_input)) - elapsed * self._tau
         return new_states, new_states
+
+"""
+        def func_dfdt(self, inputs, hidden_state):
+            h_in = tf.matmul(inputs, self.kernel)
+        h_rec = tf.matmul(hidden_state, self.recurrent_kernel)
+        dh_in = self.scale * tf.nn.tanh(h_in + h_rec + self.bias)
+        if self.tau > 0:
+            dh = dh_in - hidden_state * self.tau
+        else:
+            dh = dh_in
+        return dh      
+"""
+
+

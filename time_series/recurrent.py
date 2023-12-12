@@ -171,8 +171,6 @@ class Recurrent(nn.Module, ABC):
         return readout, state
 
 
-
-
     def _map_inputs(self, inputs):
         if self._input_mapping in ["affine", "linear"]:
             inputs = inputs * self._params["input_w"]
@@ -191,3 +189,27 @@ class Recurrent(nn.Module, ABC):
             output = output + self._params["output_b"]
         return output
 
+input_mapping="affine",
+output_mapping="affine",
+
+if self._input_mapping in ["affine", "linear"]:
+    self._params["input_w"] = self.add_weight(
+        name="input_w",
+        init_value=torch.ones((self.sensory_size,)),
+    )
+if self._input_mapping == "affine":
+    self._params["input_b"] = self.add_weight(
+        name="input_b",
+        init_value=torch.zeros((self.sensory_size,)),
+    )
+
+if self._output_mapping in ["affine", "linear"]:
+    self._params["output_w"] = self.add_weight(
+        name="output_w",
+        init_value=torch.ones((self.motor_size,)),
+    )
+if self._output_mapping == "affine":
+    self._params["output_b"] = self.add_weight(
+        name="output_b",
+        init_value=torch.zeros((self.motor_size,)),
+    )

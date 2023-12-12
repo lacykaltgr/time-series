@@ -2,16 +2,13 @@
 
 import torch
 
-from .CTRNN import CTRNNCell
-from .LSTM import LSTMCell
-
 class BidirectionalRNN(torch.nn.Module):
-    def __init__(self, units, **kwargs):
+    def __init__(self, units, forward_rnn, backward_rnn, **kwargs):
         self.units = units
         self.state_size = (units, units, units)
 
-        self.ctrnn = CTRNNCell(self.units, num_unfolds=4, method="euler")
-        self.lstm = LSTMCell(units=self.units)
+        self.forward_rnn = forward_rnn
+        self.backward_rnn = backward_rnn
 
         super(BidirectionalRNN, self).__init__(**kwargs)
 

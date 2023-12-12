@@ -1,7 +1,7 @@
 # Copyright 2021 The ODE-LSTM Authors. All Rights Reserved.
 
-from time_series.cells.gated import BaseEncoderLSTM, BaseEncoderGRU
-from time_series.cells.ode import BaseEncoderNODE
+from time_series.continuous_cells.gated import BaseEncoderLSTM, BaseEncoderGRU
+from time_series.continuous_cells.ode import BaseEncoderNODE
 
 #BaseLSTM with BaseEncoderNODE as rnn
 class ODELSTM(BaseEncoderLSTM):
@@ -32,8 +32,6 @@ class ODELSTM(BaseEncoderLSTM):
             jump_first=True,
             **kwargs
         )
-
-
 
 
 #BaseGRU with BaseEncoderNODE as rnn

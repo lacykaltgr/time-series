@@ -1,5 +1,10 @@
+import torch
+from torch import nn
+import stribor as st
 
-class GRUFlowBlock(Module):
+from time_series.recurrent import Recurrent
+
+class GRUFlow(Recurrent):
     """
     Single GRU flow layer
 
@@ -14,7 +19,7 @@ class GRUFlowBlock(Module):
             time_net,
             time_hidden_dim=None
     ):
-        super().__init__()
+        super().__init__(input_size=hidden_dim, units=hidden_dim)
 
         # Spectral norm for linear layers
         norm = lambda layer: torch.nn.utils.spectral_norm(layer, n_power_iterations=5)
@@ -36,9 +41,9 @@ class GRUFlowBlock(Module):
         u = torch.tanh(self.lin_hh(torch.cat([r * h, t], -1)))
         return z * (u - h)
 
-    def forward(self, h, t):
-        h = h + self.time_net(t) * self.residual(h, t)
-        return h
+    def update_state(self, inputs, state, t):
+        state = state + self.time_net(t) * self.residual(state, t)
+        return state
 
     def inverse(self, y, t, iterations=100):
         x = y
@@ -47,43 +52,9 @@ class GRUFlowBlock(Module):
             x = y - residual
         return x
 
-
-class GRUFlow(Module):
-    """
-    GRU flow model
-
-    Args:
-        dim: Data dimension
-        n_layers: Number of flow layers
-        time_net: Time embedding module
-        time_hidden_dim: Time embedding hidden dimension
-    """
-    def __init__(
-            self,
-            dim: int,
-            n_layers: int,
-            time_net: str,
-            time_hidden_dim: Optional[int] = None,
-            **kwargs
-    ):
-        super().__init__()
-
-        layers = []
-        for _ in range(n_layers):
-            layers.append(GRUFlowBlock(dim, time_net, time_hidden_dim))
-
-        self.layers = torch.nn.ModuleList(layers)
-
-    def forward(self, x: Tensor, t: Tensor) -> Tensor:
-        if x.shape[-2] != t.shape[-2]:
-            x = x.repeat_interleave(t.shape[-2], dim=-2)
-
-        for layer in self.layers:
-            x = layer(x, t)
-
-        return x
-
+"""
     def inverse(self, y, t):
         for layer in reversed(self.layers):
             y = layer.inverse(y, t)
         return y
+"""

@@ -2,7 +2,7 @@
 import torch
 from torch import nn
 
-from time_series.cells.discrete.GRU import GRU
+from time_series.discrete_cells import GRU
 
 
 class GRUD(GRU):

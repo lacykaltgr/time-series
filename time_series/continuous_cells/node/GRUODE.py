@@ -1,5 +1,5 @@
-from time_series.cells.ode import BaseNODE
-from time_series.cells.drift import GRUDrift
+from time_series.continuous_cells.ode import BaseNODE
+from time_series.continuous_cells.ode import GRUDrift
 
 # ODE with gru drift as drift function
 class GRUODE(BaseNODE):
@@ -10,6 +10,3 @@ class GRUODE(BaseNODE):
             drift=GRUDrift(units),
             **kwargs
         )
-
-
-
